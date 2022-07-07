@@ -1,0 +1,771 @@
+---
+title: "NFL Predictions"
+author: "Kush Patel"
+date: "10/13/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r}
+library(tidyverse)
+library(readr)
+library(readxl)
+library(leaps)
+library(car)
+library(caret)
+library(boot)
+library(rpart)
+```
+
+```{r}
+teams <- read_csv("nfl_teams.csv")
+stadiums <- read_csv("nfl_stadiums.csv")
+results <- read_csv("Game.Results.csv")
+qb <- read_csv("qb2020.csv")
+qb19 <- read_csv("qb2019.csv")
+qb18 <- read_csv("qb2018.csv")
+qb17 <- read_csv("qb2017.csv")
+qb16 <- read_csv("qb2016.csv")
+qb15 <- read_csv("qb2015.csv")
+qb14 <- read_csv("qb2014.csv")
+qb13 <- read_csv("qb2013.csv")
+qb12 <- read_csv("qb2012.csv")
+qball <- bind_rows(qb12, qb13, qb14, qb15, qb16, qb17, qb18, qb19)
+inj <- read_csv("injuries.csv")
+off <- read_csv("off.csv")
+def <- read_csv("def.csv")
+```
+
+
+```{r}
+od <- merge(off, def, by=c("Tm", "Year"))
+```
+
+
+```{r}
+od <- rename(od,
+  'Off_Rk' = 'Rk.x',
+  'Off_Pts' = 'PF.x',
+  'Off_Total_Yds' = 'Yds.x',
+  'Off_Plays' = 'Ply.x',
+  'Off_Y/P' = 'Y/P.x',
+  'Off_TO' = 'TO.x',
+  'Off_FL' = 'FL.x',
+  'Off_Total_1D' = '1stD.x',
+  'Off_Cmp' = 'Cmp.x',
+  'Off_Pass_Att' = 'Att.x',
+  'Off_Pass_Yds' = 'Yds_1.x',
+  'Off_Pass_TD' = 'TD.x',
+  'Off_Int' = 'Int.x',
+  'Off_Pass_NY/A' = 'NY/A.x',
+  'Off_Pass_1D' = '1stD_1.x',
+  'Off_Rush_Att' = 'Att_1.x',
+  'Off_Rush_Yds' = 'Yds_2.x',
+  'Off_Rush_TD' = 'TD_1.x',
+  'Off_Rush_Y/A' = 'Y/A.x',
+  'Off_Rush_1D' = '1stD_2.x',
+  'Off_Pen' = 'Pen.x',
+  'Off_Pen_Yds' = 'Yds_3.x',
+  'Off_Pen_1D' = '1stPy.x',
+  'Off_Sc_Pct' = 'Sc%.x',
+  'Off_TO_Pct' = 'TO%.x',
+  'Off_Exp_Pts' = 'EXP.x',
+  'Def_Rk' = 'Rk.y',
+  'Def_Pts' = 'PF.y',
+  'Def_Total_Yds' = 'Yds.y',
+  'Def_Plays' = 'Ply.y',
+  'Def_Y/P' = 'Y/P.y',
+  'Def_TO' = 'TO.y',
+  'Def_FL' = 'FL.y',
+  'Def_Total_1D' = '1stD.y',
+  'Def_Cmp' = 'Cmp.y',
+  'Def_Pass_Att' = 'Att.y',
+  'Def_Pass_Yds' = 'Yds_1.y',
+  'Def_Pass_TD' = 'TD.y',
+  'Def_Int' = 'Int.y',
+  'Def_Pass_NY/A' = 'NY/A.y',
+  'Def_Pass_1D' = '1stD_1.y',
+  'Def_Rush_Att' = 'Att_1.y',
+  'Def_Rush_Yds' = 'Yds_2.y',
+  'Def_Rush_TD' = 'TD_1.y',
+  'Def_Rush_Y/A' = 'Y/A.y',
+  'Def_Rush_1D' = '1stD_2.y',
+  'Def_Pen' = 'Pen.y',
+  'Def_Pen_Yds' = 'Yds_3.y',
+  'Def_Pen_1D' = '1stPy.y',
+  'Def_Sc_Pct' = 'Sc%.y',
+  'Def_TO_Pct' = 'TO%.y',
+  'Def_Exp_Pts' = 'EXP.y'
+) %>% select(-G.x, -G.y)
+```
+
+
+```{r}
+teams <- select(teams, -team_name_short, -team_id_pfr, -team_conference_pre2002, -team_division_pre2002)
+```
+
+```{r}
+od_new <- merge(od, teams, by.x="Tm", by.y="team_name") %>% select(-team_conference, -team_division)  %>% filter(Year != 2020)
+```
+```{r}
+od_pca_start <- mutate(od_new, label=paste(team_id, substr(as.character(Year), 3, 4))) %>% select(-Off_Rk, -Def_Rk)
+od_pca_start[is.na(od_pca_start)] <- 0
+
+od_stats <- od_pca_start[,c(3:52)]
+```
+
+```{r}
+pca <- prcomp(od_stats, scale. = TRUE)
+summary(pca)
+```
+```{r}
+ggplot(data.frame(pca$rotation), aes(x = PC1, y = PC2, label = rownames(pca$rotation))) +
+  geom_point(color = "purple3") + geom_label(size = 5) + theme_minimal() + xlim(-.25, .3) + ylim(-.3, .25)
+```
+
+
+```{r}
+od_stats <- rename(od_stats, 'Off_Y_P'='Off_Y/P', 'Off_Pass_NY_A'='Off_Pass_NY/A', 'Def_Pass_NY_A'='Def_Pass_NY/A')
+od_filtered <- select(od_stats, Off_Pts, Off_Total_Yds, Off_Y_P, Off_Total_1D, Off_Pass_Yds, Off_Pass_TD, Off_Pass_NY_A, Off_Pass_1D, Off_Rush_Att, Off_Sc_Pct, Off_Exp_Pts, Def_Pts, Def_Total_Yds, Def_Total_1D, Def_Pass_NY_A, Def_Rush_Att, Def_Rush_Yds, Def_Rush_1D, Def_Sc_Pct, Def_Exp_Pts)
+```
+
+
+```{r}
+K <- 5
+set.seed(1305)
+m <- kmeans(data.matrix(od_filtered), centers = K)
+df_clusters <- mutate(od_filtered, cluster = factor(m$cluster))
+```
+
+```{r}
+cent <- as_tibble(m$centers) %>% mutate(cluster = factor(1:K))
+ggplot(df_clusters, aes(Off_Total_Yds, Def_Total_Yds, color = cluster)) + geom_point(size = 3, alpha = .7) +
+  theme_bw() + scale_color_brewer(type = "qual", palette = "Set1")
+```
+
+```{r}
+od_clustered <- mutate(od_pca_start, cluster=df_clusters$cluster) %>% select(Tm, Year, team_id, cluster)
+```
+
+
+```{r}
+tot <- data.frame("Tottenham Hotspur Stadium", "London, UK", 2019, NA, 'outdoor', NA, NA, 'moderate', 62303, 'FieldTurf', NA, NA, NA, NA, NA)
+names(tot) <- names(stadiums)
+stadiums <- rbind(stadiums, tot)
+```
+
+```{r}
+results <- mutate(results, stadium_name=stadium) %>% select(-stadium) %>% mutate(stadium_name=ifelse(stadium_name=="Mercedes-Benz Stadium", "Mercedes-Benz Superdome", stadium_name)) %>% mutate(stadium_name=ifelse(stadium_name=="TIAA Bank Field", "EverBank Field", stadium_name)) %>% mutate(stadium_name=ifelse(stadium_name=="Tottenham Stadium", "Tottenham Hotspur Stadium", stadium_name))
+stadiums <- mutate(stadiums, stadium_name=ifelse(stadium_name=="FedExField", "FedEx Field", stadium_name))
+
+stadium_merge <- merge(results, stadiums, by=("stadium_name"))
+stadium_merge <- stadium_merge[order(stadium_merge$X1),]
+stadium_merge <- select(stadium_merge, -LATITUDE, -LONGITUDE, -NAME, -STATION, -stadium_address, -weather_detail)
+stadium_merge <- mutate(stadium_merge, season_before=schedule_season-1)
+```
+
+
+```{r}
+teamm <- merge(stadium_merge, teams, by.x="team_home", by.y="team_name")
+teama <- merge(teamm, teams, by.x="team_away", by.y="team_name")
+```
+
+```{r}
+teama <- rename(teama,
+  away_team_id = team_id.y,
+  away_team_conf = team_conference.y,
+  away_team_div = team_division.y,
+  home_team_id = team_id.x,
+  home_team_conf = team_conference.x,
+  home_team_div = team_division.x,
+)
+```
+
+```{r}
+teama <- teama[order(teama$X1),]
+stage <- teama[c('X1', 'team_home', 'home_team_id', 'team_away', 'away_team_id', 'schedule_date', 'schedule_season', 'schedule_week', 'score_home', 'score_away', 'team_favorite_id', 'spread_favorite', 'over_under_line', 'schedule_playoff', 'stadium_name', 'stadium_neutral', 'weather_temperature', 'weather_wind_mph', 'weather_humidity', 'stadium_location', 'stadium_type', 'stadium_weather_station_code', 'stadium_weather_type', 'stadium_capacity', 'stadium_surface', 'ELEVATION', 'home_team_conf', 'home_team_div', 'away_team_conf', 'away_team_div', 'season_before')]
+```
+
+
+
+```{r}
+stage_od <- merge(stage, od_new, by.x=c("home_team_id", "season_before"), by.y=c("team_id", "Year"))
+stage_oda <- merge(stage_od, od_new, by.x=c("away_team_id", "season_before"), by.y=c("team_id", "Year"))
+```
+
+```{r}
+stage_oda <- rename(stage_oda,
+  'Off_Rk_H' = 'Off_Rk.x',
+  'Off_Pts_H' = 'Off_Pts.x',
+  'Off_Total_Yds_H' = 'Off_Total_Yds.x',
+  'Off_Plays_H' = 'Off_Plays.x',
+  'Off_Y/P_H' = 'Off_Y/P.x',
+  'Off_TO_H' = 'Off_TO.x',
+  'Off_FL_H' = 'Off_FL.x',
+  'Off_Total_1D_H' = 'Off_Total_1D.x',
+  'Off_Cmp_H' = 'Off_Cmp.x',
+  'Off_Pass_Att_H' = 'Off_Pass_Att.x',
+  'Off_Pass_Yds_H' = 'Off_Pass_Yds.x',
+  'Off_Pass_TD_H' = 'Off_Pass_TD.x',
+  'Off_Int_H' = 'Off_Int.x',
+  'Off_Pass_NY/A_H' = 'Off_Pass_NY/A.x',
+  'Off_Pass_1D_H' = 'Off_Pass_1D.x',
+  'Off_Rush_Att_H' = 'Off_Rush_Att.x',
+  'Off_Rush_Yds_H' = 'Off_Rush_Yds.x',
+  'Off_Rush_TD_H' = 'Off_Rush_TD.x',
+  'Off_Rush_Y/A_H' = 'Off_Rush_Y/A.x',
+  'Off_Rush_1D_H' = 'Off_Rush_1D.x',
+  'Off_Pen_H' = 'Off_Pen.x',
+  'Off_Pen_Yds_H' = 'Off_Pen_Yds.x',
+  'Off_Pen_1D_H' = 'Off_Pen_1D.x',
+  'Off_Sc_Pct_H' = 'Off_Sc_Pct.x',
+  'Off_TO_Pct_H' = 'Off_TO_Pct.x',
+  'Off_Exp_Pts_H' = 'Off_Exp_Pts.x',
+  'Def_Rk_H' = 'Def_Rk.x',
+  'Def_Pts_H' = 'Def_Pts.x',
+  'Def_Total_Yds_H' = 'Def_Total_Yds.x',
+  'Def_Plays_H' = 'Def_Plays.x',
+  'Def_Y/P_H' = 'Def_Y/P.x',
+  'Def_TO_H' = 'Def_TO.x',
+  'Def_FL_H' = 'Def_FL.x',
+  'Def_Total_1D_H' = 'Def_Total_1D.x',
+  'Def_Cmp_H' = 'Def_Cmp.x',
+  'Def_Pass_Att_H' = 'Def_Pass_Att.x',
+  'Def_Pass_Yds_H' = 'Def_Pass_Yds.x',
+  'Def_Pass_TD_H' = 'Def_Pass_TD.x',
+  'Def_Int_H' = 'Def_Int.x',
+  'Def_Pass_NY/A_H' = 'Def_Pass_NY/A.x',
+  'Def_Pass_1D_H' = 'Def_Pass_1D.x',
+  'Def_Rush_Att_H' = 'Def_Rush_Att.x',
+  'Def_Rush_Yds_H' = 'Def_Rush_Yds.x',
+  'Def_Rush_TD_H' = 'Def_Rush_TD.x',
+  'Def_Rush_Y/A_H' = 'Def_Rush_Y/A.x',
+  'Def_Rush_1D_H' = 'Def_Rush_1D.x',
+  'Def_Pen_H' = 'Def_Pen.x',
+  'Def_Pen_Yds_H' = 'Def_Pen_Yds.x',
+  'Def_Pen_1D_H' = 'Def_Pen_1D.x',
+  'Def_Sc_Pct_H' = 'Def_Sc_Pct.x',
+  'Def_TO_Pct_H' = 'Def_TO_Pct.x',
+  'Def_Exp_Pts_H' = 'Def_Exp_Pts.x',
+  'Off_Rk_A' = 'Off_Rk.y',
+  'Off_Pts_A' = 'Off_Pts.y',
+  'Off_Total_Yds_A' = 'Off_Total_Yds.y',
+  'Off_Plays_A' = 'Off_Plays.y',
+  'Off_Y/P_A' = 'Off_Y/P.y',
+  'Off_TO_A' = 'Off_TO.y',
+  'Off_FL_A' = 'Off_FL.y',
+  'Off_Total_1D_A' = 'Off_Total_1D.y',
+  'Off_Cmp_A' = 'Off_Cmp.y',
+  'Off_Pass_Att_A' = 'Off_Pass_Att.y',
+  'Off_Pass_Yds_A' = 'Off_Pass_Yds.y',
+  'Off_Pass_TD_A' = 'Off_Pass_TD.y',
+  'Off_Int_A' = 'Off_Int.y',
+  'Off_Pass_NY/A_A' = 'Off_Pass_NY/A.y',
+  'Off_Pass_1D_A' = 'Off_Pass_1D.y',
+  'Off_Rush_Att_A' = 'Off_Rush_Att.y',
+  'Off_Rush_Yds_A' = 'Off_Rush_Yds.y',
+  'Off_Rush_TD_A' = 'Off_Rush_TD.y',
+  'Off_Rush_Y/A_A' = 'Off_Rush_Y/A.y',
+  'Off_Rush_1D_A' = 'Off_Rush_1D.y',
+  'Off_Pen_A' = 'Off_Pen.y',
+  'Off_Pen_Yds_A' = 'Off_Pen_Yds.y',
+  'Off_Pen_1D_A' = 'Off_Pen_1D.y',
+  'Off_Sc_Pct_A' = 'Off_Sc_Pct.y',
+  'Off_TO_Pct_A' = 'Off_TO_Pct.y',
+  'Off_Exp_Pts_A' = 'Off_Exp_Pts.y',
+  'Def_Rk_A' = 'Def_Rk.y',
+  'Def_Pts_A' = 'Def_Pts.y',
+  'Def_Total_Yds_A' = 'Def_Total_Yds.y',
+  'Def_Plays_A' = 'Def_Plays.y',
+  'Def_Y/P_A' = 'Def_Y/P.y',
+  'Def_TO_A' = 'Def_TO.y',
+  'Def_FL_A' = 'Def_FL.y',
+  'Def_Total_1D_A' = 'Def_Total_1D.y',
+  'Def_Cmp_A' = 'Def_Cmp.y',
+  'Def_Pass_Att_A' = 'Def_Pass_Att.y',
+  'Def_Pass_Yds_A' = 'Def_Pass_Yds.y',
+  'Def_Pass_TD_A' = 'Def_Pass_TD.y',
+  'Def_Int_A' = 'Def_Int.y',
+  'Def_Pass_NY/A_A' = 'Def_Pass_NY/A.y',
+  'Def_Pass_1D_A' = 'Def_Pass_1D.y',
+  'Def_Rush_Att_A' = 'Def_Rush_Att.y',
+  'Def_Rush_Yds_A' = 'Def_Rush_Yds.y',
+  'Def_Rush_TD_A' = 'Def_Rush_TD.y',
+  'Def_Rush_Y/A_A' = 'Def_Rush_Y/A.y',
+  'Def_Rush_1D_A' = 'Def_Rush_1D.y',
+  'Def_Pen_A' = 'Def_Pen.y',
+  'Def_Pen_Yds_A' = 'Def_Pen_Yds.y',
+  'Def_Pen_1D_A' = 'Def_Pen_1D.y',
+  'Def_Sc_Pct_A' = 'Def_Sc_Pct.y',
+  'Def_TO_Pct_A' = 'Def_TO_Pct.y',
+  'Def_Exp_Pts_A' = 'Def_Exp_Pts.y'
+) %>% select(-Tm.x, -Tm.y)
+```
+
+```{r}
+final <- stage_oda[order(stage_oda$X1),]
+```
+
+
+```{r}
+qball <- mutate(qball, Player = str_remove(Player, "\\\\[[:alnum:]]*")) %>% mutate(Player = str_remove(Player, '[\\+]')) %>% mutate(Player = str_remove(Player, '[*]')) %>% mutate(Player = trimws(Player)) %>% mutate(Tm=ifelse(Tm=="NOR", "NO", Tm)) %>% mutate(Tm=ifelse(Tm=="NWE", "NE", Tm) )%>% mutate(Tm=ifelse(Tm=="TAM", "TB", Tm)) %>% mutate(Tm=ifelse(Tm=="GNB", "GB", Tm)) %>% mutate(Tm=ifelse(Tm=="STL", "LAR", Tm)) %>% mutate(Tm=ifelse(Tm=="SDG", "LAC", Tm)) %>% mutate(Tm=ifelse(Tm=="KAN", "KC", Tm)) %>% mutate(Tm=ifelse(Tm=="SFO", "SF", Tm))
+```
+
+```{r}
+qball <- select(qball, Year, Player, Tm, 'Cmp%', 'TD%', 'Int%', 'Y/G', Rate, QBR, 'ANY/A', '4QC', 'GWD')
+qball[is.na(qball)] <- 0
+```
+
+
+
+```{r}
+final <- mutate(final, spread=score_home-score_away) %>% mutate(total=score_home+score_away) %>% mutate(result=ifelse(score_home > score_away, 1, 0)) %>% mutate(Off_1D_By_Plays_H=Off_Total_1D_H/Off_Plays_H) %>% mutate(Off_1D_By_Plays_A=Off_Total_1D_A/Off_Plays_A)
+```
+
+
+
+```{r}
+spreadset <- final[,32:136]
+```
+
+```{r}
+spreadset_a <- select(spreadset, spread, Off_Pts_H, Off_Total_Yds_H, 'Off_Y/P_H', Off_Total_1D_H, Off_Pass_Yds_H, Off_Pass_TD_H, 'Off_Pass_NY/A_H', Off_Pass_1D_H, Off_Sc_Pct_H, Off_Exp_Pts_H, Def_Pts_H, Def_Total_Yds_H, Def_Total_1D_H, 'Def_Pass_NY/A_H', Def_Rush_Att_H, Def_Rush_Yds_H, Def_Rush_1D_H, Def_Sc_Pct_H, Def_Exp_Pts_H, Off_Rush_Att_H, Off_Pts_A, Off_Total_Yds_A, 'Off_Y/P_A', Off_Total_1D_A, Off_Pass_Yds_A, Off_Pass_TD_A, 'Off_Pass_NY/A_A', Off_Pass_1D_A, Off_Sc_Pct_A, Off_Exp_Pts_A, Def_Pts_A, Def_Total_Yds_A, Def_Total_1D_A, 'Def_Pass_NY/A_A', Def_Rush_Att_A, Def_Rush_Yds_A, Def_Rush_1D_A, Def_Sc_Pct_A, Def_Exp_Pts_A, Off_Rush_Att_A)
+```
+
+```{r}
+totalset <- select(final, total, Off_Pts_H, Off_Total_Yds_H, 'Off_Y/P_H', Off_Total_1D_H, Off_Pass_Yds_H, Off_Pass_TD_H, 'Off_Pass_NY/A_H', Off_Pass_1D_H, Off_Sc_Pct_H, Off_Exp_Pts_H, Def_Pts_H, Def_Total_Yds_H, Def_Total_1D_H, 'Def_Pass_NY/A_H', Def_Rush_Att_H, Def_Rush_Yds_H, Def_Rush_1D_H, Def_Sc_Pct_H, Def_Exp_Pts_H, Off_Rush_Att_H, Off_Pts_A, Off_Total_Yds_A, 'Off_Y/P_A', Off_Total_1D_A, Off_Pass_Yds_A, Off_Pass_TD_A, 'Off_Pass_NY/A_A', Off_Pass_1D_A, Off_Sc_Pct_A, Off_Exp_Pts_A, Def_Pts_A, Def_Total_Yds_A, Def_Total_1D_A, 'Def_Pass_NY/A_A', Def_Rush_Att_A, Def_Rush_Yds_A, Def_Rush_1D_A, Def_Sc_Pct_A, Def_Exp_Pts_A, Off_Rush_Att_A)
+```
+
+```{r}
+total.f.lm <- lm(total ~ ., totalset)
+summary(total.f.lm)
+```
+
+```{r}
+d <- regsubsets(total ~ ., data=totalset, nbest=1, nvmax=5, method="backward")
+summary(d)
+```
+
+```{r}
+try2.lm <- lm(total ~ Off_Total_Yds_H + Off_Rush_Att_H + Off_Pass_Yds_A + Def_Rush_Yds_A, totalset)
+summary(try2.lm)
+```
+
+
+
+```{r}
+multi.f.lm <- lm(spread ~ ., spreadset_a)
+summary(multi.f.lm)
+```
+```{r}
+b <- regsubsets(spread ~ ., data=spreadset_a, nbest=1, nvmax=5, method="backward")
+summary(b)
+```
+
+```{r}
+try.lm <- lm(spread ~ Off_Pts_H + Def_Pts_H + Off_Sc_Pct_A + Def_Total_Yds_A, spreadset_a)
+summary(try.lm)
+```
+
+
+```{r}
+first.lm <- lm(spread ~ ., spreadset)
+summary(first.lm)
+```
+
+```{r}
+homeset <- final[,c(10, 32:135)]
+homeset
+```
+
+
+
+```{r}
+home.lm <- lm(score_home ~ ., homeset)
+summary(home.lm)
+```
+
+```{r}
+a <- regsubsets(spread ~ ., data=spreadset, nbest=1, nvmax=10, method="backward")
+summary(a)
+```
+
+```{r}
+second.lm <- lm(spread ~ Off_Pts_H + + Off_Sc_Pct_A + Def_Pass_TD_H + Def_Rush_TD_H + Def_Total_Yds_A, spreadset)
+summary(second.lm)
+```
+
+```{r}
+cluster_od <- merge(stage, od_clustered, by.x=c("home_team_id", "season_before"), by.y=c("team_id", "Year"))
+cluster_oda <- merge(cluster_od, od_clustered, by.x=c("away_team_id", "season_before"), by.y=c("team_id", "Year"))
+cluster_oda
+```
+
+```{r}
+final_cluster <- mutate(cluster_oda, spread=score_home-score_away) %>% mutate(total=score_home+score_away) %>% mutate(result=ifelse(score_home > score_away, 1, 0))
+```
+
+```{r}
+final_cluster
+```
+
+```{r}
+cluster_mod <- lm(spread ~ cluster.x + cluster.y, data=final_cluster)
+summary(cluster_mod)
+```
+
+```{r}
+cluster_mod_int <- lm(spread ~ cluster.x + cluster.y + cluster.x*cluster.y, data=final_cluster)
+summary(cluster_mod_int)
+```
+```{r}
+final_lim <- select(final, home_team_id, away_team_id, schedule_season, spread, total, result, Off_1D_By_Plays_H, Off_1D_By_Plays_A, Off_Pts_H, Off_Total_Yds_H, 'Off_Y/P_H', Off_Total_1D_H, Off_Pass_Yds_H, Off_Pass_TD_H, 'Off_Pass_NY/A_H', Off_Pass_1D_H, Off_Sc_Pct_H, Off_Exp_Pts_H, Def_Pts_H, Def_Total_Yds_H, Def_Total_1D_H, 'Def_Pass_NY/A_H', Def_Rush_Att_H, Def_Rush_Yds_H, Def_Rush_1D_H, Def_Sc_Pct_H, Def_Exp_Pts_H, Off_Rush_Att_H, Off_Pts_A, Off_Total_Yds_A, 'Off_Y/P_A', Off_Total_1D_A, Off_Pass_Yds_A, Off_Pass_TD_A, 'Off_Pass_NY/A_A', Off_Pass_1D_A, Off_Sc_Pct_A, Off_Exp_Pts_A, Def_Pts_A, Def_Total_Yds_A, Def_Total_1D_A, 'Def_Pass_NY/A_A', Def_Rush_Att_A, Def_Rush_Yds_A, Def_Rush_1D_A, Def_Sc_Pct_A, Def_Exp_Pts_A, Off_Rush_Att_A)
+```
+
+
+
+```{r}
+qb_merge <- merge(final_lim, qball, by.x=c("home_team_id", "schedule_season"), by.y=c("Tm", "Year")) %>% merge(qball, by.x=c("away_team_id", "schedule_season"), by.y=c("Tm", "Year"))
+qb_merge
+```
+
+```{r}
+setup_lm <- qb_merge[,c(4:48, 50:58, 60:68)]
+setup_lm
+```
+
+```{r}
+qbonly <- setup_lm[, c(1:3,46:63)]
+qbonly
+```
+
+```{r}
+qbonly.lm.spread <- lm(spread ~ . -total -result, qbonly)
+summary(qbonly.lm.spread)
+```
+```{r}
+qbonly.lm.spread <- lm(total ~ . -spread -result, qbonly)
+summary(qbonly.lm.spread)
+```
+
+```{r}
+qb.lm <- lm(spread ~ . -total -result, setup_lm)
+summary(qb.lm)
+```
+```{r}
+c <- regsubsets(spread ~ . -total -result, data=setup_lm, nbest=1, nvmax=5, method="backward")
+summary(c)
+```
+
+```{r}
+qb.lm.int <- lm(spread ~ QBR.x + QBR.y + QBR.x*QBR.y, setup_lm)
+summary(qb.lm.int)
+```
+```{r}
+qb.lm.int2 <- lm(spread ~ `ANY/A.x` + `ANY/A.y` + `ANY/A.x`*`ANY/A.y`, setup_lm)
+summary(qb.lm.int2)
+```
+
+```{r}
+final.lm <- lm(spread ~ QBR.x + QBR.y + `ANY/A.x` + `ANY/A.y` + Off_Pts_H + Off_Sc_Pct_A + Def_Pts_H + Def_Total_Yds_A, setup_lm)
+summary(final.lm)
+```
+```{r}
+qb <- mutate(qb, Player = str_remove(Player, "\\\\[[:alnum:]]*")) %>% mutate(Player = str_remove(Player, '[\\+]')) %>% mutate(Player = str_remove(Player, '[*]')) %>% mutate(Player = trimws(Player)) %>% mutate(Tm=ifelse(Tm=="NOR", "NO", Tm)) %>% mutate(Tm=ifelse(Tm=="NWE", "NE", Tm) )%>% mutate(Tm=ifelse(Tm=="TAM", "TB", Tm)) %>% mutate(Tm=ifelse(Tm=="GNB", "GB", Tm)) %>% mutate(Tm=ifelse(Tm=="STL", "LAR", Tm)) %>% mutate(Tm=ifelse(Tm=="SDG", "LAC", Tm)) %>% mutate(Tm=ifelse(Tm=="KAN", "KC", Tm)) %>% mutate(Tm=ifelse(Tm=="SFO", "SF", Tm)) %>% mutate(Tm=ifelse(Tm=="LVR", "OAK", Tm))
+qb <- select(qb, Year, Player, Tm, 'Cmp%', 'TD%', 'Int%', 'Y/G', Rate, QBR, 'ANY/A', '4QC', 'GWD')
+qb[is.na(qb)] <- 0
+qb <- filter(qb, Player %in% c("Joe Burrow","Patrick Mahomes","Aaron Rodgers","Kyler Murray","Russell Wilson","Ben Roethlisberger","Deshaun Watson","Lamar Jackson","Tom Brady","Josh Allen","Ryan Tannehill","Derek Carr","Drew Brees","Matt Ryan","Carson Wentz","Justin Herbert","Jared Goff","Matthew Stafford","Teddy Bridgewater","Jimmy Garoppolo","Kirk Cousins","Baker Mayfield","Philip Rivers","Cam Newton","Nick Foles","Ryan Fitzpatrick","Gardner Minshew II","Drew Lock","Daniel Jones","Dwayne Haskins","Andy Dalton","Sam Darnold"))
+qb
+
+```
+
+
+```{r}
+od_new_19 <- filter(od_new, Year==2019)
+```
+
+
+```{r}
+filter(qb, Tm=="BUF")['QBR'] %>% rename('QBR.x'='QBR')
+```
+
+
+```{r}
+predict_game_spread <- function(home_id, away_id) {
+  home_row_q <- filter(qb, Tm==home_id)
+  away_row_q <- filter(qb, Tm==away_id)
+  home_row_f <- filter(od_new_19, team_id==home_id)
+  away_row_f <- filter(od_new_19, team_id==away_id)
+  a <- home_row_q['QBR'] %>% rename('QBR.x'='QBR')
+  b <- away_row_q['QBR'] %>% rename('QBR.y'='QBR')
+  c <- home_row_q['ANY/A'] %>% rename('ANY/A.x'='ANY/A')
+  d <- away_row_q['ANY/A'] %>% rename('ANY/A.y'='ANY/A')
+  e <- home_row_f['Off_Pts'] %>% rename('Off_Pts_H'='Off_Pts')
+  f <- away_row_f['Off_Sc_Pct'] %>% rename('Off_Sc_Pct_A'='Off_Sc_Pct')
+  g <- home_row_f['Def_Pts'] %>% rename('Def_Pts_H'='Def_Pts')
+  h <- away_row_f['Def_Total_Yds'] %>% rename('Def_Total_Yds_A'='Def_Total_Yds')
+  predict(final.lm, cbind.data.frame(a,b,c,d,e,f,g,h))
+}
+```
+
+```{r}
+predict_game_spread("BUF", "NE")
+predict_game_spread("CIN", "TEN")
+predict_game_spread("CLE", "OAK")
+predict_game_spread("DET", "IND")
+predict_game_spread("GB", "MIN")
+predict_game_spread("KC", "NYJ")
+predict_game_spread("MIA", "LAR")
+predict_game_spread("BAL", "PIT")
+predict_game_spread("DEN", "LAC")
+predict_game_spread("CHI", "NO")
+predict_game_spread("SEA", "SF")
+predict_game_spread("PHI", "DAL")
+predict_game_spread("NYG", "TB")
+predict_game_spread("SF", "GB")
+predict_game_spread("ATL", "DEN")
+predict_game_spread("BUF", "SEA")
+predict_game_spread("IND", "BAL")
+predict_game_spread("JAX", "HOU")
+predict_game_spread("KC", "CAR")
+predict_game_spread("MIN", "DET")
+predict_game_spread("TEN", "CHI")
+predict_game_spread("WAS", "NYG")
+predict_game_spread("LAC", "OAK")
+predict_game_spread("ARI", "MIA")
+predict_game_spread("DAL", "PIT")
+predict_game_spread("TB", "NO")
+predict_game_spread("NYJ", "NE")
+predict_game_spread("TEN", "IND")
+predict_game_spread("CAR", "TB")
+predict_game_spread("CLE", "HOU")
+predict_game_spread("DET", "WAS")
+predict_game_spread("GB", "JAX")
+predict_game_spread("NYG", "PHI")
+predict_game_spread("PIT", "CIN")
+predict_game_spread("ARI", "BUF")
+predict_game_spread("OAK", "DEN")
+predict_game_spread("MIA", "LAC")
+predict_game_spread("LAR", "SEA")
+predict_game_spread("NO", "SF")
+predict_game_spread("NE", "BAL")
+```
+
+```{r}
+total.lm <- lm(total ~ `Y/G.x` + `Y/G.y` + Off_Total_Yds_H + Def_Rush_Yds_A, setup_lm)
+summary(total.lm)
+```
+
+
+```{r}
+predict_game_total <- function(home_id, away_id) {
+  home_row_q <- filter(qb, Tm==home_id)
+  away_row_q <- filter(qb, Tm==away_id)
+  home_row_f <- filter(od_new_19, team_id==home_id)
+  away_row_f <- filter(od_new_19, team_id==away_id)
+  a <- home_row_q['Y/G'] %>% rename('Y/G.x'='Y/G')
+  b <- away_row_q['Y/G'] %>% rename('Y/G.y'='Y/G')
+  c <- home_row_f['Off_Total_Yds'] %>% rename('Off_Total_Yds_H'='Off_Total_Yds')
+  d <- away_row_f['Def_Rush_Yds'] %>% rename('Def_Rush_Yds_A'='Def_Rush_Yds')
+  predict(total.lm, cbind.data.frame(a,b,c,d))
+}
+```
+
+```{r}
+predict_game_total("BUF", "NE")
+predict_game_total("CIN", "TEN")
+predict_game_total("CLE", "OAK")
+predict_game_total("DET", "IND")
+predict_game_total("GB", "MIN")
+predict_game_total("KC", "NYJ")
+predict_game_total("MIA", "LAR")
+predict_game_total("BAL", "PIT")
+predict_game_total("DEN", "LAC")
+predict_game_total("CHI", "NO")
+predict_game_total("SEA", "SF")
+predict_game_total("PHI", "DAL")
+predict_game_total("NYG", "TB")
+predict_game_total("SF", "GB")
+predict_game_total("ATL", "DEN")
+predict_game_total("BUF", "SEA")
+predict_game_total("IND", "BAL")
+predict_game_total("JAX", "HOU")
+predict_game_total("KC", "CAR")
+predict_game_total("MIN", "DET")
+predict_game_total("TEN", "CHI")
+predict_game_total("WAS", "NYG")
+predict_game_total("LAC", "OAK")
+predict_game_total("ARI", "MIA")
+predict_game_total("DAL", "PIT")
+predict_game_total("TB", "NO")
+predict_game_total("NYJ", "NE")
+predict_game_total("TEN", "IND")
+predict_game_total("CAR", "TB")
+predict_game_total("CLE", "HOU")
+predict_game_total("DET", "WAS")
+predict_game_total("GB", "JAX")
+predict_game_total("NYG", "PHI")
+predict_game_total("PIT", "CIN")
+predict_game_total("ARI", "BUF")
+predict_game_total("OAK", "DEN")
+predict_game_total("MIA", "LAC")
+predict_game_total("LAR", "SEA")
+predict_game_total("NO", "SF")
+predict_game_total("NE", "BAL")
+```
+
+```{r}
+result.lm <- glm(result ~ . -home_team_id -away_team_id -schedule_season -spread -total -Off_1D_By_Plays_H -Off_1D_By_Plays_A, data=final_lim, family = "binomial")
+summary(result.lm)
+```
+
+```{r}
+result.lm <- glm(result ~ . -home_team_id -away_team_id -schedule_season -spread -total -Off_1D_By_Plays_H -Off_1D_By_Plays_A, data=final_lim, family = "binomial")
+summary(result.lm)
+```
+
+```{r}
+qbonly.glm <- glm(result ~ . -spread -total, qbonly, family="binomial")
+summary(qbonly.glm)
+```
+
+```{r}
+combined.glm <- glm(result ~ Off_Pts_H + Def_Pts_H + `QBR.x` + `Y/G.x` + `Y/G.y` + `ANY/A.y`, setup_lm, family="binomial")
+summary(combined.glm)
+```
+
+```{r}
+cv.glm(final_lim, result.lm, K=10)
+```
+
+```{r}
+cv.glm(qbonly, qbonly.glm, K=10)
+```
+
+```{r}
+cv.glm(setup_lm, combined.glm, K=10)
+```
+
+```{r}
+# grow tree
+fit <- rpart(result ~ . -total -spread,
+   method="class", data=setup_lm)
+
+printcp(fit) # display the results
+plotcp(fit) # visualize cross-validation results
+summary(fit) # detailed summary of splits
+
+# plot tree
+plot(fit, uniform=TRUE,
+   main="Classification Tree for Game Result")
+text(fit, use.n=TRUE, all=TRUE, cex=.8)
+```
+
+```{r}
+# grow tree
+fit <- rpart(result ~ . -spread -total,
+   method="class", data=qbonly)
+
+printcp(fit) # display the results
+plotcp(fit) # visualize cross-validation results
+summary(fit) # detailed summary of splits
+
+# plot tree
+plot(fit, uniform=TRUE,
+   main="Classification Tree for Game Result")
+text(fit, use.n=TRUE, all=TRUE, cex=.8)
+```
+
+```{r}
+predict_game_result <- function(home_id, away_id) {
+  home_row_q <- filter(qb, Tm==home_id)
+  away_row_q <- filter(qb, Tm==away_id)
+  home_row_f <- filter(od_new_19, team_id==home_id)
+  away_row_f <- filter(od_new_19, team_id==away_id)
+  a <- home_row_f['Off_Pts'] %>% rename('Off_Pts_H'='Off_Pts')
+  b <- home_row_f['Def_Pts'] %>% rename('Def_Pts_H'='Def_Pts')
+  c <- home_row_q['QBR'] %>% rename('QBR.x'='QBR')
+  d <- home_row_q['Y/G'] %>% rename('Y/G.x'='Y/G')
+  e <- away_row_q['Y/G'] %>% rename('Y/G.y'='Y/G')
+  f <- away_row_q['ANY/A'] %>% rename('ANY/A.y'='ANY/A')
+  predict(combined.glm, cbind.data.frame(a,b,c,d,e,f), type="response")
+}
+```
+
+```{r}
+predict_game_result("BUF", "NE")
+predict_game_result("CIN", "TEN")
+predict_game_result("CLE", "OAK")
+predict_game_result("DET", "IND")
+predict_game_result("GB", "MIN")
+predict_game_result("KC", "NYJ")
+predict_game_result("MIA", "LAR")
+predict_game_result("BAL", "PIT")
+predict_game_result("DEN", "LAC")
+predict_game_result("CHI", "NO")
+predict_game_result("SEA", "SF")
+predict_game_result("PHI", "DAL")
+predict_game_result("NYG", "TB")
+predict_game_result("SF", "GB")
+predict_game_result("ATL", "DEN")
+predict_game_result("BUF", "SEA")
+predict_game_result("IND", "BAL")
+predict_game_result("JAX", "HOU")
+predict_game_result("KC", "CAR")
+predict_game_result("MIN", "DET")
+predict_game_result("TEN", "CHI")
+predict_game_result("WAS", "NYG")
+predict_game_result("LAC", "OAK")
+predict_game_result("ARI", "MIA")
+predict_game_result("DAL", "PIT")
+predict_game_result("TB", "NO")
+predict_game_result("NYJ", "NE")
+predict_game_result("TEN", "IND")
+predict_game_result("CAR", "TB")
+predict_game_result("CLE", "HOU")
+predict_game_result("DET", "WAS")
+predict_game_result("GB", "JAX")
+predict_game_result("NYG", "PHI")
+predict_game_result("PIT", "CIN")
+predict_game_result("ARI", "BUF")
+predict_game_result("OAK", "DEN")
+predict_game_result("MIA", "LAC")
+predict_game_result("LAR", "SEA")
+predict_game_result("NO", "SF")
+predict_game_result("NE", "BAL")
+```
+
+```{r}
+set.seed(123)
+
+split_lm <- mutate(setup_lm, split=sample(x=c("TRAIN", "TEST"), size=2136, replace=T, prob=c(.85,.15)))
+TRAIN <- filter(split_lm, split=="TRAIN")
+TEST <- filter(split_lm, split=="TEST")
+```
+
+```{r}
+predict.full <- predict(final.lm, TRAIN)
+
+# Extract Residuals
+resid.full <- TRAIN$spread - predict.full
+
+resid_full <- na.omit(resid.full)
+# Calculate RMSE
+rmse.full <- sqrt(mean(resid_full^2))
+#rmse.full
+```
+
+```{r}
+##TEST RMSE
+
+predict_full <- predict(final.lm, TEST)
+resid_full1 <- TEST$spread - predict_full
+resid_full1 <- na.omit(resid_full1)
+rmse_full <- sqrt(mean(resid_full1^2))
+```
+
